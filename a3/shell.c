@@ -6,7 +6,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <string.h>
-#include <mcheck.h>
 
 #include "parser.h"
 #include "shell.h"
@@ -102,7 +101,48 @@ int execute_cd(char** words) {
 	 * - If so, return an EXIT_FAILURE status to indicate something is 
 	 *   wrong.
 	 */
+    
+    //Check to see if arguments are correct.
+    //char * command="cd";
+    if(words[0]==NULL || strcmp("cd", words[0])!=0){
+        exit(EXIT_FAILURE);
+    }
+    if(words[1]==NULL){
+        exit(EXIT_FAILURE);
+    }
+    //Checks if path is relative
+    char currdir[MAX_DIRNAME];
+    int relative = is_relative(words[1]);
+    int result = relative;
+    
+    //Check to see if words[1] is too long
+    //If words[1] is too long exits(fail).
+    if (strlen(words[1]) > MAX_DIRNAME) {
+        exit(EXIT_FAILURE);
+    }
 
+    //If path is relative, concatenate it current path and change dir.
+    if(is_relative(words[1]) == 1)
+    {
+        getcwd(currdir, MAX_DIRNAME);
+        strncat(strncat(currdir, "/", MAX_DIRNAME), words[1], MAX_DIRNAME);
+        chdir(currdir);
+        result = 0;
+    }
+    //If Path is absolute
+    else
+    {
+        // simply executes chdir and changes directory to absolute path.
+        chdir(words[1]);
+        result = 0;
+    }
+    
+    return(result);
+    
+    
+    
+    
+    
 
 
 	/**
@@ -146,7 +186,14 @@ int execute_command(char **tokens) {
 	 *   would suffice.
 	 * Function returns only in case of a failure (EXIT_FAILURE).
 	 */
-
+    int result;
+    result=0;
+    result=execvp(tokens[0], tokens);
+    if(result==-1){
+        perror(tokens[0]);
+    }
+    
+    return result;
 
 }
 
@@ -154,7 +201,7 @@ int execute_command(char **tokens) {
 /**
  * Executes a non-builtin command.
  */
-int execute_nonbuiltin(simple_command *s) {
+int execute_nonbuiltin(simple_command *s){
 	/**
 	 * TODO: Check if the in, out, and err fields are set (not NULL),
 	 * and, IN EACH CASE:
@@ -168,16 +215,76 @@ int execute_nonbuiltin(simple_command *s) {
 	 *   function above).
 	 * This function returns only if the execution of the program fails.
 	 */
-	
-
-}
+    
+    // New file descriptors with default values in case they are NULL
+    int in_des=0;
+    int out_des=1;
+    int err_des=2;
+    //Checking if they are NULL and initialising the descriptors
+    // and runnign dup2
+    if (s->in != NULL) {
+        in_des = open(s->in, O_TRUNC);
+        dup2(in_des, 0);
+        close(in_des);
+    }
+    
+    if (s->out != NULL) {
+        out_des = open(s->out, O_RDWR|O_CREAT, 0777);
+        dup2(out_des, 1);
+        close(out_des);
+    }
+    
+    if (s->err != NULL) {
+        err_des = open(s->err, O_TRUNC);
+        dup2(err_des, 2);
+        close(err_des);
+    }
+    
+    
+    // Executes command
+    return(execute_command(s->tokens));
+    
+    
+    }
 
 
 /**
  * Executes a simple command (no pipes).
  */
 int execute_simple_command(simple_command *cmd) {
-
+    
+    // CD
+    if(cmd->builtin==1){
+        execute_cd(cmd->tokens);
+        return 0;
+    }
+    //Exit
+    if(cmd->builtin==2){
+        exit(EXIT_SUCCESS);
+        return 0;
+    }
+    // Not CD or Exit
+    else{
+        pid_t pid;
+        pid = fork();
+        int status;
+        if (pid > 0){ 			/* only parent gets here */
+            if((wait(&status)) == -1) {
+                perror("wait");
+                exit(1);
+            }
+        
+        } else if (pid == 0){		/* only child gets here */
+            execute_nonbuiltin(cmd);
+        } else{			/* error */
+            perror("fork()");
+            
+        }
+        
+    }
+    
+    
+    return 0;
 	/**
 	 * TODO: 
 	 * Check if the command is builtin.
@@ -207,8 +314,10 @@ int execute_complex_command(command *c) {
 	 * Execute nonbuiltin commands only. If it's exit or cd, you should not 
 	 * execute these in a piped context, so simply ignore builtin commands. 
 	 */
-	
-
+    if(c->scmd!=NULL){
+        execute_nonbuiltin(c->scmd);
+    }
+    
 
 	/** 
 	 * Optional: if you wish to handle more than just the 
@@ -224,7 +333,13 @@ int execute_complex_command(command *c) {
 		 * parent and the child. Make sure to check any errors in 
 		 * creating the pipe.
 		 */
-
+        int pfd[2], pid, pid2;
+        int status1;
+        int status2;
+        if((pipe(pfd)) == -1) {
+            perror("pipe error");
+            exit(EXIT_FAILURE);
+        }
 			
 		/**
 		 * TODO: Fork a new process.
@@ -248,6 +363,64 @@ int execute_complex_command(command *c) {
 		 *     - wait for both children to finish.
 		 */
 		
+        if((pid = fork()) > 0){
+            //Parent of 1st fork process
+            
+            if((pid2 = fork()) > 0){
+                //Parent of fork 2
+                //Close both ends of pipe pfd
+                close(pfd[0]);
+                close(pfd[1]);
+                //Waits for both children to finish
+                wait(&status2);
+                wait(&status1);
+                return EXIT_SUCCESS;
+            }
+            
+            else if(pid2 == 0){
+                //2nd Child
+                //Close other end of pipe
+                close(pfd[1]);
+                //redirect stdin
+                dup2(pfd[0], fileno(stdin));
+                //close file descriptor
+                close(pfd[0]);
+                // execute command
+                execute_complex_command(c->cmd2);
+                //exit
+                exit(0);
+            }
+            else if(pid2 == -1){
+                perror("Fork");
+                exit(EXIT_FAILURE);
+            }
+            
+        }
+        else if(pid == 0){
+            //Child No. 1
+            //Close one end of pipe
+            close(pfd[0]);
+            // redirect
+            dup2(pfd[1], fileno(stdout));
+            //close pipe file dexriptor 1.
+            close(pfd[1]);
+            //Executes command.
+            execute_complex_command(c->cmd1);
+            //Exits
+            exit(0);
+            
+            }
+        else{
+            perror("fork error");
+            exit(EXIT_FAILURE);
+        }
+        
+        
 	}
 	return 0;
 }
+
+
+
+
+
