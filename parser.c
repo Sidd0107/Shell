@@ -1,3 +1,7 @@
+/*
+ *Parser.c-Takes care of parsing commands
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

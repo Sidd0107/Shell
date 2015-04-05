@@ -1,3 +1,6 @@
+/*
+ * Code for execution of commands
+ */
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
